@@ -4,7 +4,7 @@
 
 ABC -- Allele-specific Binding from ChIP-Seq 
 
-Version 1.0
+Version 1.1
 
 Mathieu Lupien 
 Code Under License Artistic-2.0
@@ -110,7 +110,7 @@ sub build_index{
    }
   
    while (<$dataFile>){
-       print $indexFile pack("N", $offset); #write index
+       print $indexFile pack("Q>", $offset); #write index
        $offset = tell($dataFile);
        $n+=1;
        chomp();
@@ -547,13 +547,13 @@ sub line_with_index{
    my $entry;             
    my $d_offset;           
 
-   $size = length(pack("N", 0));
+   $size = length(pack("Q>", 0));
    $i_offset = $size * ($lineNumber-1);
 
    seek($indexFile, $i_offset, 0) or return;
    read($indexFile, $entry, $size);
 
-   $d_offset = unpack("N", $entry);
+   $d_offset = unpack("Q>", $entry);
 
    seek($dataFile, $d_offset, 0);
    return scalar(<$dataFile>);
