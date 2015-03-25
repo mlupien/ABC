@@ -441,15 +441,15 @@ sub make_figure{
             q`par(mar=c(6.1,6.1,4.1,2.1))`,
             q`plot(ab, type = "l", col="red", lwd=8, ylim=c(-m2 - 10,m1 + 10), ann=F, axes=F)`,
             q`axis(1,at=c(0,m,length(ab)),labels=c(-m,0,+m),cex.axis=1.5,lwd=2)`,
-            q`axis(2,at=c(seq(round((-m2 - 10)/10,0)*10,0,by=10), seq(0,round((m1 + 10)/10,0)*10, by=10)),labels=c(seq(round((m2 + 10)/10,0)*10,0, by=-10), seq(0,round((m1 + 10)/10,0)*10, by=10)),las=1,cex.axis=1.5, lwd=2)`, 
+            q`axis(2,at=c(seq(round((-m2 - 10)/20,0)*20,0,by=20), seq(0,round((m1 + 10)/20,0)*20, by=20)),labels=c(seq(round((m2 + 10)/20,0)*20,0, by=-20), seq(0,round((m1 + 10)/20,0)*20, by=20)),las=1,cex.axis=1.5, lwd=2)`, 
             q`points(a, type = "l", col="grey",lwd=4)`,
             q`points(b, type = "l", lty=2, col="grey", lwd=4)`,
             q`points(-1 * cd, type = "l", col="blue", lwd=8)`,
             q`points(-1 * c, type = "l", col="grey", lwd=4)`,
             q`points(-1 * d, type = "l", lty=2, col="grey", lwd=4)`,
             q`title(ylab="Depth of Sequence Reads Containing SNP (n)",xlab="Position Relative to SNP",cex.lab=1.5)`,
-            q`text(20,m1 + 5,"Reference Allele",col="red",cex=2)`,
-            q`text(20,-m2 - 5,"Alternate Allele",col="blue",cex=2)`,
+            q`text(30,m1 + 5,"Reference Allele",col="red",cex=2)`,
+            q`text(30,-m2 - 5,"Alternate Allele",col="blue",cex=2)`,
             q`abline(h=0,lty=2,col="black",lwd=3)`,
             q`dev.off()`);
 
@@ -797,7 +797,7 @@ while(<$SNPfile>){
    my $refAllele;
    my $nonrefAllele;
    if(($refA[0] ne $ref) && ($refA[1] ne $ref)){ #skip problem with strand
-       print "\nPossible strand issue: $rs, skipping\n";
+       print "PROBLEM - Possible strand issue: $rs\n";
        next;
    }else{
       if($refA[0] eq $ref){
@@ -939,128 +939,136 @@ while(<$SNPfile>){
        # Determine an allele-specific bias exist
  
        my $total=$A1 + $A2;
-       my $bpval=binomial($A1, $total, $ps); 
+       my $bpval=1;
 
-       my $pout=0; 
-       my $qout=0;
-       my $errN=0;
+       if($total < 1){
+             print "PROBLEM - Check Alleles of SNP: $rs\n";
+          }else{
+         
+            $bpval=binomial($A1, $total, $ps); 
+       #}
+             my $pout=0; 
+             my $qout=0;
+             my $errN=0;
  
-       if($A1 != 0){ 
-          $pout=sprintf("%0.2f", $A1/($A1 + $A2));
-          $qout=sprintf("%0.2f", 1-$pout);
-       }else{
-          $pout=sprintf("%0.2f", 0);
-          $qout=sprintf("%0.2f", 1);
-       }
+             if($A1 != 0){ 
+                $pout=sprintf("%0.2f", $A1/($A1 + $A2));
+                $qout=sprintf("%0.2f", 1-$pout);
+             }else{
+                $pout=sprintf("%0.2f", 0);
+                $qout=sprintf("%0.2f", 1);
+             }
      
-   
-       my $A1pos=0; # number of reference alleles +ve strand
-       my $A1neg=0; # number of reference alleles -ve strand
-       my $A2pos=0; # number of alternate alleles +ve strand
-       my $A2neg=0; # number of alternate alleles -ve strand
-       my @A1=();
-       my @A2=();
-       my @A1strand=(); 
-       my @A2strand=();
-       my $test="0x0010"; # test negative strand
-       my $hex;
+             my $A1pos=0; # number of reference alleles +ve strand
+             my $A1neg=0; # number of reference alleles -ve strand
+             my $A2pos=0; # number of alternate alleles +ve strand
+             my $A2neg=0; # number of alternate alleles -ve strand
+             my @A1=();
+             my @A2=();
+             my @A1strand=(); 
+             my @A2strand=();
+             my $test="0x0010"; # test negative strand
+             my $hex;
 
-       for(my $i=0; $i <= $#Rpos; $i++){
-          if($Allele[$i] eq $refAllele){
+             for(my $i=0; $i <= $#Rpos; $i++){
+                if($Allele[$i] eq $refAllele){
         
-              $hex = sprintf("0x%04x",$strand[$i]);
-              push(@A1,$Rpos[$i]);
+                    $hex = sprintf("0x%04x",$strand[$i]);
+                    push(@A1,$Rpos[$i]);
         
-             if(($hex & $test) ne $test){ 
-                 $A1pos+=1;
-                 push(@A1strand,"+");
-              }else{
-                 $A1neg+=1;
-                 push(@A1strand,"-");
-              }
+                    if(($hex & $test) ne $test){ 
+                        $A1pos+=1;
+                        push(@A1strand,"+");
+                    }else{
+                        $A1neg+=1;
+                        push(@A1strand,"-");
+                    }
              
-          }elsif($Allele[$i] eq $nonrefAllele){
+                }elsif($Allele[$i] eq $nonrefAllele){
        
-              $hex = sprintf("0x%04x",$strand[$i]);
-              push(@A2,$Rpos[$i]);
+                    $hex = sprintf("0x%04x",$strand[$i]);
+                    push(@A2,$Rpos[$i]);
            
-              if(($hex & $test) ne $test){
-                 $A2pos+=1;
-                 push(@A2strand,"+");
-              }else{
-                 $A2neg+=1;
-                 push(@A2strand,"-");
-              }
-          }
-     }
+                    if(($hex & $test) ne $test){
+                       $A2pos+=1;
+                       push(@A2strand,"+");
+                    }else{
+                       $A2neg+=1;
+                       push(@A2strand,"-");
+                    }
+                }
+            }
 
-     my $total_pos=$A1pos + $A2pos;
-     my $total_neg=$A1neg + $A2neg;   
+            my $total_pos=$A1pos + $A2pos;
+            my $total_neg=$A1neg + $A2neg;   
  
-     my $pstrand;
-     my $tp;
+            my $pstrand;
+            my $tp;
      
-     #check for unequal distribution of +ve and -ve strand reads
-     #A negative (or weak) result helps indicate if SNP is in the centre.  
+            #check for unequal distribution of +ve and -ve strand reads
+            #A negative (or weak) result helps indicate if SNP is in the centre.  
 
-     $pstrand=binomial($total_pos,$total,0.5);
+            $pstrand=binomial($total_pos,$total,0.5);
 
-     #check for equal distribution of positive and negative for both alleles
-     #indicates a shift in the positive and negative reads for each allele 
-     #likely false positive if the allele-specific binomial probability is significant
+            #check for equal distribution of positive and negative for both alleles
+            #indicates a shift in the positive and negative reads for each allele 
+            #likely false positive if the allele-specific binomial probability is significant
    
-     my $fish=fisher($A1pos, $A1neg, $A2pos, $A2neg);
-     my $chisq;
+            my $fish=fisher($A1pos, $A1neg, $A2pos, $A2neg);
+            my $chisq;
 
-     # check expected values >= 5
+            #check expected values >= 5
 
-     if((($A1pos + $A2pos) * ($A1pos + $A1neg))/$total >= 5 && (($A1pos + $A2pos) * ($A2pos + $A2neg))/$total >= 5 && (($A1neg + $A2neg) * ($A1pos + $A1neg))/$total >= 5 && (($A1neg + $A2neg) * ($A2pos + $A2neg))/$total >= 5){
-        $chisq=chisq($A1pos, $A1neg, $A2pos, $A2neg);
-     }else{
-        $chisq="NA";
-     }
+            if((($A1pos + $A2pos) * ($A1pos + $A1neg))/$total >= 5 && (($A1pos + $A2pos) * ($A2pos + $A2neg))/$total >= 5 && (($A1neg + $A2neg) * ($A1pos + $A1neg))/$total >= 5 && (($A1neg + $A2neg) * ($A2pos + $A2neg))/$total >= 5){
+                 $chisq=chisq($A1pos, $A1neg, $A2pos, $A2neg);
+            }else{
+                 $chisq="NA";
+            }
 
-     # Check for a bias of the allele position in reads
-     if(@A1 && @A2){    
-         $tp=mann_whit(\@A1,\@A2);
-     }else{
-         $tp="NA";
-     }  
+            # Check for a bias of the allele position in reads
+            if(@A1 && @A2){    
+                 $tp=mann_whit(\@A1,\@A2);
+            }else{
+                 $tp="NA";
+            }  
      
-     if($total != $n){
-         $errN = $n - $total;
-     }
+            if($total != $n){
+                 $errN = $n - $total;
+            }
      
-     if(($tp eq "NA") || ($tp >= $mwt) && ($fish >= $ft)){
-         #Print Results and summary for SNP
-         if($verb == 1){ 
-             print "\n$rs $chr $bp -- The frequency of the $refAllele ($A1) allele = $pout and the $nonrefAllele ($A2) allele = $qout --- # of reads = $n\n";
-             print "Observed Alleles = $refA[0] / $refA[1] --- Reference Allele = $ref\n";
-             print "\nPotential Sequencing/Alignment Error !!! $rs -- Number of unexpected alleles = $errN \n";
-             print "A1 strand (+ve,-ve) = $A1pos, $A1neg // A2 strand (+ve,-ve)  =  $A2pos, $A2neg\n"; 
-             print "ASB_BINOM = $bpval\n";
-             print "MANN_WHIT = $tp\n"; 
-             print "STRAND_BINOM = $pstrand\n";
-             print "FISHER = $fish\n"; 
-             print "CHISQ = $chisq\n"; 
-             print "SIG_MAX = $bg_max\n";
-         } 
+            if(($tp eq "NA") || ($tp >= $mwt) && ($fish >= $ft)){
+                #Print Results and summary for SNP
+                if($verb == 1){ 
+                    print "\n$rs $chr $bp -- The frequency of the $refAllele ($A1) allele = $pout and the $nonrefAllele ($A2) allele = $qout --- # of reads = $n\n";
+                    print "Observed Alleles = $refA[0] / $refA[1] --- Reference Allele = $ref\n";
+                    print "\n$rs -- Number of unexpected alleles = $errN \n";
+                    print "A1 strand (+ve,-ve) = $A1pos, $A1neg // A2 strand (+ve,-ve)  =  $A2pos, $A2neg\n"; 
+                    print "ASB_BINOM = $bpval\n";
+                    print "MANN_WHIT = $tp\n"; 
+                    print "STRAND_BINOM = $pstrand\n";
+                    print "FISHER = $fish\n"; 
+                    print "CHISQ = $chisq\n"; 
+                    print "SIG_MAX = $bg_max\n";
+                } 
 
-         print $align "$rs $chr $bp -- The frequency of the $refAllele ($A1) allele = $pout and the $nonrefAllele ($A2) allele = $qout\n";
-         print $align "Observed Alleles = $refA[0] / $refA[1] --- Reference Allele = $ref\n";
-         print $ASdist "$rs\t$chr\t$bp\t$ref\t@refA\t$refAllele\t$A1\t$pout\t$A1pos\t$A1neg\t$nonrefAllele\t$A2\t$qout\t$A2pos\t$A2neg\t$n\t$errN\t";
-         print $ASdist "$bg_max\t$bpval\t$tp\t$fish\t$chisq\t$pstrand\t";
+                print $align "$rs $chr $bp -- The frequency of the $refAllele ($A1) allele = $pout and the $nonrefAllele ($A2) allele = $qout\n";
+                print $align "Observed Alleles = $refA[0] / $refA[1] --- Reference Allele = $ref\n";
+                print $ASdist "$rs\t$chr\t$bp\t$ref\t@refA\t$refAllele\t$A1\t$pout\t$A1pos\t$A1neg\t$nonrefAllele\t$A2\t$qout\t$A2pos\t$A2neg\t$n\t$errN\t";
+                print $ASdist "$bg_max\t$bpval\t$tp\t$fish\t$chisq\t$pstrand\t";
 
-         print_comma_delim(\@A1, $ASdist, 1);
-         print_comma_delim(\@A1strand, $ASdist, 1);
-         print_comma_delim(\@A2, $ASdist, 1);
-         print_comma_delim(\@A2strand, $ASdist, 0);
+                print_comma_delim(\@A1, $ASdist, 1);
+                print_comma_delim(\@A1strand, $ASdist, 1);
+                print_comma_delim(\@A2, $ASdist, 1);
+                print_comma_delim(\@A2strand, $ASdist, 0);
 
-         print_aligned_reads(\@Allele,$refAllele,$align,\@Starts,\@Reads,\@Stops,\@Rpos,\@strand,$max,$min,$bp);   
-         print_aligned_reads(\@Allele,$nonrefAllele,$align,\@Starts,\@Reads,\@Stops,\@Rpos,\@strand,$max,$min,$bp);
-    }
-  }
+                print_aligned_reads(\@Allele,$refAllele,$align,\@Starts,\@Reads,\@Stops,\@Rpos,\@strand,$max,$min,$bp);   
+                print_aligned_reads(\@Allele,$nonrefAllele,$align,\@Starts,\@Reads,\@Stops,\@Rpos,\@strand,$max,$min,$bp);
+           }
+       }
+   }
+# NEED to close loop!
 }
+
 
 print "Finished! Check the output files $ASdistribution and $alignments for a summary of the results.\n";
 
