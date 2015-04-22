@@ -4,23 +4,23 @@
 
 ABC -- Allele-specific Binding from ChIP-Seq 
 
-Version 1.1
+Version 1.2
 
 Mathieu Lupien 
 Code Under License Artistic-2.0
 August 12, 2014
 
 ABC Identifies potential allele-specific binding events at known heterozygous positions within the aligned reads of a ChiP-Seq experiment. 
-ABC requires at a minimum two (2) files a sorted .sam file of the aligned reads from a ChIP-Seq experiment and a file containing the position, strand and allele
+ABC requires at a minimum two (2) files a sorted BAM/SAM file of the aligned reads from a ChIP-Seq experiment and a file containing the position, strand and allele
 information of heterozygous Single Nucleotide Variants (SNVs), either SNPs and/or Mutations. ABC calls allele-specific binding by identifying a bias in
 the distribution of the SNV alleles while attempting to control for potential false positives. If you have genomic sequence data
 you can use the allele ratio in the DNA as the expected frequency to control for chromosome copy number.
 
-Usage: perl ABC.pl --sam <input.sam> --snv-file <snv filename> --out <output filename>
+Usage: perl ABC.pl --align-file <input.sam> --snv-file <snv filename> --out <output filename>
 
---sam (Required)
-		Specify ChIP-Seq .sam file.
-		Note: the .sam file must be sorted
+--align-file (Required)
+		Specify ChIP-Seq alignment file BAM/SAM.
+		Note: the BAM/SAM file must be sorted
 
 --bg (Optional)
 		Specify a .bedgraph file capturing the ChIP-Seq signal (shifted read pileups) of the .sam file
@@ -47,6 +47,9 @@ Usage: perl ABC.pl --sam <input.sam> --snv-file <snv filename> --out <output fil
 --min-reads (Optional)
 		The minimum number of reads covering the a SNVs (default: 25).
 		(ie. ABC will report only those SNPs/Mutations with # reads overlapping them.)
+
+--min-mapq (Optional)
+		Set the minimum allowed MAPQ score (default: 0).
 
 --d (Optional)
 		Divide chromosomes in d segments for faster retrieval (default: 2000). 
@@ -83,7 +86,7 @@ use strict;
 use warnings;
 use Statistics::R;
 use Scalar::Util qw(looks_like_number);
-
+use File::Temp qw(tempfile tempdir);
 
 # SUBROUTINES
 
@@ -93,7 +96,9 @@ sub build_index{
    my $dataFile = shift;
    my $indexFile = shift;
    my $check = shift; # Sam or Bedgraph; 0 equal SAM, 1 equals Bedgraph
+   my $bcheck = shift; 
    my $offset = 0;
+
  
    my @a=();
    my @b=();
@@ -108,7 +113,10 @@ sub build_index{
    if($check == 1){
       $cc=0;
    }
-  
+   if($bcheck == 1){
+      seek($dataFile, 0, 0);
+   }  
+   
    while (<$dataFile>){
        print $indexFile pack("Q>", $offset); #write index
        $offset = tell($dataFile);
@@ -439,7 +447,7 @@ sub make_figure{
 
     $R->run(qq`pdf("$output", width=8 , height=8)`,
             q`par(mar=c(6.1,6.1,4.1,2.1))`,
-            q`plot(ab, type = "l", col="red", lwd=8, ylim=c(-m2 - 10,m1 + 10), ann=F, axes=F)`,
+            q`plot(ab, type = "l", col="red", lwd=8, ylim=c(-m2 - 15,m1 + 15), ann=F, axes=F)`,
             q`axis(1,at=c(0,m,length(ab)),labels=c(-m,0,+m),cex.axis=1.5,lwd=2)`,
             q`axis(2,at=c(seq(round((-m2 - 10)/20,0)*20,0,by=20), seq(0,round((m1 + 10)/20,0)*20, by=20)),labels=c(seq(round((m2 + 10)/20,0)*20,0, by=-20), seq(0,round((m1 + 10)/20,0)*20, by=20)),las=1,cex.axis=1.5, lwd=2)`, 
             q`points(a, type = "l", col="grey",lwd=4)`,
@@ -448,8 +456,8 @@ sub make_figure{
             q`points(-1 * c, type = "l", col="grey", lwd=4)`,
             q`points(-1 * d, type = "l", lty=2, col="grey", lwd=4)`,
             q`title(ylab="Depth of Sequence Reads Containing SNP (n)",xlab="Position Relative to SNP",cex.lab=1.5)`,
-            q`text(30,m1 + 5,"Reference Allele",col="red",cex=2)`,
-            q`text(30,-m2 - 5,"Alternate Allele",col="blue",cex=2)`,
+            q`text(e,m1 + 5,"Reference Allele",col="red",cex=2)`,
+            q`text(e,-m2 - 5,"Alternate Allele",col="blue",cex=2)`,
             q`abline(h=0,lty=2,col="black",lwd=3)`,
             q`dev.off()`);
 
@@ -549,15 +557,30 @@ sub line_with_index{
 
    $size = length(pack("Q>", 0));
    $i_offset = $size * ($lineNumber-1);
-
+  
    seek($indexFile, $i_offset, 0) or return;
    read($indexFile, $entry, $size);
 
    $d_offset = unpack("Q>", $entry);
-
+   
    seek($dataFile, $d_offset, 0);
+ 
    return scalar(<$dataFile>);
 }
+
+#create mask for portion of a read
+sub mask{
+   my $start=shift;
+   my $end=shift;
+   my @read=();
+ 
+   for(my $j=$start; $j<=$end; $j++){
+     push(@read, "-");
+   }
+  
+   return(@read);
+}
+
 
 # command line wrapper
 sub getCommands{
@@ -566,8 +589,9 @@ sub getCommands{
     my $d=2000;
     my $samfile;
     my $snpfile;
-    my $outdist;
-    my $outalign;
+    my $outdist="ABC.dist";
+    my $outalign="ABC.align";
+    my $outtemp="ABC";
     my $bgfile;
     my $vsnv;
     my $sam=0;
@@ -576,6 +600,7 @@ sub getCommands{
     my $snp=0;
     my $mwt=0.05;
     my $ft=0.05;
+    my $map=0;
 
     if(@{$argv_ref}){ 
        for(my $x=0; $x <= $#{$argv_ref}; $x++){
@@ -583,7 +608,7 @@ sub getCommands{
              $snp=1;
              $snpfile=${$argv_ref}[$x + 1];
           }
-          if(${$argv_ref}[$x] eq "--sam"){
+          if(${$argv_ref}[$x] eq "--align-file"){
              $sam=1;
              $samfile=${$argv_ref}[$x + 1];
           }
@@ -593,6 +618,7 @@ sub getCommands{
           if(${$argv_ref}[$x] eq "--out"){
              $outdist=${$argv_ref}[$x + 1] . '.dist';
              $outalign=${$argv_ref}[$x + 1] . '.align';
+             $outtemp=${$argv_ref}[$x + 1];
           }
           if(${$argv_ref}[$x] eq "--min-reads"){
              $minr=${$argv_ref}[$x + 1];
@@ -601,9 +627,8 @@ sub getCommands{
              $d=${$argv_ref}[$x + 1];
           }
           if(${$argv_ref}[$x] eq "--help"){
-              print "\n\nUsage: perl ABC.pl --sam <input.sam> --snv-file <snv filename> --out <output filename prefix>\n\n";
-              print "\n--sam (Required)\n\t\tSpecify ChIP-Seq .sam file.\n";
-              print "\t\tNote: the .sam file must be sorted\n";
+              print "\n\nUsage: perl ABC.pl --align-file <input.sam> --snv-file <snv filename> --out <output filename prefix>\n\n";
+              print "\n--align-file (Required)\n\t\tSpecify ChIP-Seq alignment file BAM/SAM.\n\t\tNote: the BAM/SAM file must be sorted\n";
               print "\n--bg (Optional)\n\t\tSpecify a .bedgraph file capturing the ChIP-Seq signal (shifted read pileups) of the .sam file\n";
               print "\t\tThis can be useful to prioritize SNPs with low coverage, since they may fall within the centre of the +ve and -ve\n";
               print "\t\tstrand peaks of the ChIP-Seq reads. This is caused by short read lengths and is not necessary for longer reads.\n";
@@ -617,6 +642,7 @@ sub getCommands{
               print "\t\tTo report all SNVs set this parameter to 0.\n";
               print "\n--f-thres (Optional).\n\t\tP-value threshold for the Fisher's exact test used to test for a bias between the strand distribution of the SNV alleles. (default: 0.05)\n";
               print "\t\tTo report all SNVs set this parameter to 0.\n";
+              print "\n--min-mapq (Optional).\n\t\tSet the minimum allowed MAPQ score (default: 0).\n";
               print "\n--verbose (Optional).\n\t\tPrint progress and SNV results summary to screen.\n\n";
               print "\n\t\t\t***\tVISUALIZING SNV RESULTS\t***\n\n\t\tCreate a figure of the distribution of reads containing a SNV of interest\n";
               print "\n\t\tThis step requires that the ABC has finished running.\n\t\tOnce ABC is finished a figure can be generated by specifying the output file prefix ";
@@ -636,22 +662,25 @@ sub getCommands{
           }
           if(${$argv_ref}[$x] eq "--verbose"){
               $verb=1;
+          }
+          if(${$argv_ref}[$x] eq "--min-mapq"){
+              $map=${$argv_ref}[$x + 1];
           } 
        }
        if($vis == 0){
           if($sam == 0 || $snp == 0 ){
-             print "\n\nUsage: perl ABC.pl --sam <input.sam> --snv-file <snv filename> --out <output filename>\n";
+             print "\n\nUsage: perl ABC.pl --align-file <input.sam> --snv-file <snv filename> --out <output filename>\n";
              print "Required input files are missing!\n\n";
              exit;
           }
        }
     }else{
-         print "\n\nUsage: perl ABC.pl --sam <input.sam> --snv-file <snv filename> --out <output filename>\n";
+         print "\n\nUsage: perl ABC.pl --align-file <input.sam> --snv-file <snv filename> --out <output filename>\n";
          print "For command line options type:\tABC --help\n\n";
          exit;
     } 
 
-return($snpfile, $samfile, $bgfile, $outdist, $outalign, $minr, $d, $mwt, $ft, $verb, $vsnv);
+return($snpfile, $samfile, $bgfile, $outdist, $outalign, $minr, $d, $mwt, $ft, $verb, $vsnv, $map, $outtemp);
 }
 
 # ABC Program
@@ -660,7 +689,7 @@ my $inputSam;
 my $inputBg;
 my $align;
 my $ASdist;
-my $indexSam;
+#my $indexSam;
 my $indexBg;
 my $bg=0;
 
@@ -672,7 +701,7 @@ my %Compl = (
         T => "A"
    );
 
-(my $SNPfilename, my $inputSamFile, my $inputBgFile, my $ASdistribution, my $alignments, my $minR, my $d, my $mwt, my $ft, my $verb, my $vsnv)=getCommands(\@ARGV);
+(my $SNPfilename, my $inputSamFile, my $inputBgFile, my $ASdistribution, my $alignments, my $minR, my $d, my $mwt, my $ft, my $verb, my $vsnv, my $map, my $outpref)=getCommands(\@ARGV);
 
 # If visualization is specified make a SNP figure and quit 
 if(defined $vsnv && defined $alignments){
@@ -687,8 +716,35 @@ if(defined $vsnv && defined $alignments){
 }
 
 open($SNPfile,"<", $SNPfilename) or die "Could not open $SNPfilename!\n";
-open($inputSam,"<",$inputSamFile) or die "Could not open $inputSamFile!\n";
-open($indexSam, "+>", "$inputSamFile.idx") or die "Could not open $inputSamFile.idx for read/write!\n";
+
+my $b=0;
+my $tbam;
+my $tbamname;
+my $template;
+my $tempname;
+
+if($inputSamFile =~ /.bam$/){ 
+   open($inputSam,"samtools view $inputSamFile |") or die "Could not open $inputSamFile!\n";
+
+   print "Extracting Alignments from $inputSamFile\n";
+   $template="ABC_TEMP_XXXXXXX";
+   $tempname=join("_",$outpref,$template);    
+ 
+   ($tbam, $tbamname) = tempfile( $tempname, UNLINK => 1, SUFFIX => ".sam");
+   open($tbam,"+>",$tbamname) or die "Could not open $tbamname for read/write!\n";
+   while(<$inputSam>){
+      print $tbam "$_";
+   }
+   $b=1;
+   close($inputSam);
+   $inputSam=$tbam;
+ 
+}else{
+   open($inputSam,"<",$inputSamFile) or die "Could not open $inputSamFile!\n";
+}
+
+(my $indexSam, my $indexSamFile) = tempfile( $tempname, UNLINK => 1, SUFFIX => ".idx");
+open($indexSam, "+>", $indexSamFile) or die "Could not open $inputSamFile.idx for read/write!\n";
 
 if(!defined($ASdistribution)){
    $ASdistribution="ABC.dist";
@@ -701,8 +757,12 @@ open($align,">",$alignments) or die "Could not open $alignments\n";
 # Create index of .sam file
 print "\nBuilding index of $inputSamFile\n";
 
-(my $chroms_ref, my $positions_ref, my $sam_n, my $read_length)=build_index($inputSam, $indexSam, 0);
+my $chroms_ref;
+my $positions_ref;
+my $sam_n;
+my $read_length;
 
+($chroms_ref, $positions_ref, $sam_n, $read_length)=build_index($inputSam, $indexSam, 0, $b);
 my @chroms=@$chroms_ref;
 my @positions=@$positions_ref;
 
@@ -742,7 +802,7 @@ if(defined($inputBgFile)){
 }
 
 # Print output file header
-print $ASdist "SNV\tCHR\tBP\tREF\tOBS\tA1\tN_A1\tF_A1\tN_A1_POS\tN_A1_NEG\tA2\tN_A2\tF_A2\tN_A2_POS\tN_A2_NEG\tN_TOTAL\tN_ERRORS\t";
+print $ASdist "SNV\tCHR\tBP\tREF\tOBS\tA1\tN_A1\tF_A1\tN_A1_POS\tN_A1_NEG\tA2\tN_A2\tF_A2\tN_A2_POS\tN_A2_NEG\tN_TOTAL\tN_ERRORS\tN_OMITTED\tMISSING_N\t";
 print $ASdist "MAX\tBINOM\tP_MANN_WHIT\tP_FISHER\tP_CHISQ\tP_STRAND\tA1_Position\tA1_Strand\tA2_Position\tA2_strand\n";
 
 
@@ -759,7 +819,7 @@ while(<$SNPfile>){
    my @line1=split(/\t/);
    check_tab_delim(\@line1);
  
-   my $chr = $line1[1]; 
+   my $chr=$line1[1]; 
    my $bp=$line1[2];
    my $rs=$line1[0];
    my $ref=$line1[4];
@@ -769,7 +829,7 @@ while(<$SNPfile>){
    # check input
    if(!looks_like_number($bp) || !looks_like_number($ps)){
       die;
-   }elsif(looks_like_number($ref) || looks_like_number($refA[0]) || looks_like_number($refA[1]) || looks_like_number($chr)){
+   }elsif(looks_like_number($ref) || looks_like_number($refA[0]) || looks_like_number($refA[1])){ # || looks_like_number($chr)){ #if they used b37 this is a problem
       die;
    } 
 
@@ -832,12 +892,55 @@ while(<$SNPfile>){
       my @Chrom=split(/(\d+)/, $line2[2]);
       my $chrom=$line2[2];
       my $start=$line2[3];
-      my $end=$start + length($line2[9]) - 1;
-      my $read=$line2[9];
+      my $mapq=$line2[4];
+      #my $end=$start + length($line2[9]) - 1;
+      #my $read=$line2[9];
+      my @splitread=split(//,$line2[9]);
       my $strand=$line2[1];
-   
+      my $cigar=$line2[5]; 
+      my $len=length($line2[9]);
+      my @lcig = $cigar =~ /\d+/g;     
+      my @tcig = $cigar =~ /\D+/g;     
+      my $scig = 0;
+      my @mask=();  
+      my @nread=();
+      my @readslice=();
+
+      if($tcig[0] ne "*"){
+         for(my $i=0; $i<=$#tcig; $i++){
+            my @tmp=@splitread;
+            if($tcig[$i] ne "H" && $tcig[$i] ne "D" && $tcig[$i] ne "N" && $tcig[$i] ne "P"){
+               $scig+=$lcig[$i];
+            }            
+            if($tcig[$i] eq "M" || $tcig[$i] eq "=" || $tcig[$i] eq "X"){
+               if($i==0){
+                  @readslice=splice(@tmp, 0, $lcig[$i]);
+                  push(@nread,@readslice);
+               }elsif($i==$#tcig){
+                  @readslice=splice(@tmp,$scig - $lcig[$i], $lcig[$i]);
+                  push(@nread,@readslice);
+               }else{
+                  @readslice=splice(@tmp,$scig - $lcig[$i], $lcig[$i]);
+                  push(@nread,@readslice); 
+               }
+            }
+            if($tcig[$i] eq "D" || $tcig[$i] eq "S" || $tcig[$i] eq "N" || $tcig[$i] eq "P" ){
+               if($i != 0){
+                 @mask=mask(1,$lcig[$i]);
+                 push(@nread,@mask);
+               }else{
+                 next;
+               }
+            }
+        } 
+      }
+
+      my $read=join("",@nread);
+      my $end=$start + length($read) - 1;
+
       # check --- in case issue with index
-      if(looks_like_number($chr) || looks_like_number($read)){
+      #if(looks_like_number($chr) || looks_like_number($read)){ # if b37 $chr is a number.
+      if(looks_like_number($read)){
           die;
       }elsif(!looks_like_number($start)){
           die;
@@ -849,6 +952,7 @@ while(<$SNPfile>){
               last;
          }
          if(($bp >= $start) && ($bp <= $end)){
+           if($mapq >= $map){
               $n+=1;
 
               my $dist = $bp - $start + 1;
@@ -860,6 +964,9 @@ while(<$SNPfile>){
               push( @Rpos, $dist );
               push( @Allele, $all );
               push( @strand, $strand);
+           }else{
+              next;
+           }
          }
       }else{
         next;
@@ -927,12 +1034,18 @@ while(<$SNPfile>){
    
        my $max = my_max(@Stops);
        my $min = my_min(@Starts);
+       my $omit=0;
+       my $amb=0;
 
        for(my $i=0; $i <= $#Reads; $i++){
           if($refAllele eq $Allele[$i]){
               $A1+=1;
           }elsif($nonrefAllele eq $Allele[$i]){
               $A2+=1;
+          }elsif($Allele[$i] eq "-"){
+              $omit+=1;
+          }elsif($Allele[$i] eq "N"){
+              $amb+=1;
           }
        }
    
@@ -945,8 +1058,7 @@ while(<$SNPfile>){
              print "PROBLEM - Check Alleles of SNP: $rs\n";
           }else{
          
-            $bpval=binomial($A1, $total, $ps); 
-       #}
+             $bpval=binomial($A1, $total, $ps); 
              my $pout=0; 
              my $qout=0;
              my $errN=0;
@@ -1032,16 +1144,17 @@ while(<$SNPfile>){
                  $tp="NA";
             }  
      
-            if($total != $n){
-                 $errN = $n - $total;
+            if($total + $omit != $n){
+                 $errN = $n - $total - $omit - $amb;
             }
      
             if(($tp eq "NA") || ($tp >= $mwt) && ($fish >= $ft)){
                 #Print Results and summary for SNP
                 if($verb == 1){ 
-                    print "\n$rs $chr $bp -- The frequency of the $refAllele ($A1) allele = $pout and the $nonrefAllele ($A2) allele = $qout --- # of reads = $n\n";
+                    print "\n$rs $chr $bp -- The frequency of the $refAllele ($A1) allele = $pout and the $nonrefAllele ($A2) allele = $qout\n";
                     print "Observed Alleles = $refA[0] / $refA[1] --- Reference Allele = $ref\n";
                     print "\n$rs -- Number of unexpected alleles = $errN \n";
+                    print "$rs -- Number of omitted alleles = $omit \n";
                     print "A1 strand (+ve,-ve) = $A1pos, $A1neg // A2 strand (+ve,-ve)  =  $A2pos, $A2neg\n"; 
                     print "ASB_BINOM = $bpval\n";
                     print "MANN_WHIT = $tp\n"; 
@@ -1053,7 +1166,7 @@ while(<$SNPfile>){
 
                 print $align "$rs $chr $bp -- The frequency of the $refAllele ($A1) allele = $pout and the $nonrefAllele ($A2) allele = $qout\n";
                 print $align "Observed Alleles = $refA[0] / $refA[1] --- Reference Allele = $ref\n";
-                print $ASdist "$rs\t$chr\t$bp\t$ref\t@refA\t$refAllele\t$A1\t$pout\t$A1pos\t$A1neg\t$nonrefAllele\t$A2\t$qout\t$A2pos\t$A2neg\t$n\t$errN\t";
+                print $ASdist "$rs\t$chr\t$bp\t$ref\t@refA\t$refAllele\t$A1\t$pout\t$A1pos\t$A1neg\t$nonrefAllele\t$A2\t$qout\t$A2pos\t$A2neg\t$n\t$errN\t$omit\t$amb\t";
                 print $ASdist "$bg_max\t$bpval\t$tp\t$fish\t$chisq\t$pstrand\t";
 
                 print_comma_delim(\@A1, $ASdist, 1);
@@ -1066,7 +1179,6 @@ while(<$SNPfile>){
            }
        }
    }
-# NEED to close loop!
 }
 
 
@@ -1077,6 +1189,9 @@ close($indexSam);
 close($SNPfile);
 close($ASdist);
 close($align);
+if($b==1){
+  close($tbam);
+}
 if(defined ($inputBgFile)){
    close($inputBg);
    close($indexBg);
