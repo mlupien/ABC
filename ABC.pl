@@ -4,7 +4,7 @@
 
 ABC -- Allele-specific Binding from ChIP-Seq 
 
-Version 1.2
+Version 1.3
 
 Mathieu Lupien 
 Code Under License Artistic-2.0
@@ -52,7 +52,7 @@ Usage: perl ABC.pl --align-file <input.sam> --snv-file <snv filename> --out <out
 		Set the minimum allowed MAPQ score (default: 0).
 
 --d (Optional)
-		Divide chromosomes in d segments for faster retrieval (default: 2000). 
+		Divide chromosomes into segments until reaching d lines for faster retrieval (default: 2000). 
                 A large number of SNVs can take a long time to process. You may try to increase the value of d.
 		However, very large numbers will not necessarily increase speed.
 
@@ -93,13 +93,13 @@ use File::Temp qw(tempfile tempdir);
 # Build index and get chromosome starts
 # Does not rely on header - helpful if spliting by chromosomes
 sub build_index{
+
    my $dataFile = shift;
    my $indexFile = shift;
    my $check = shift; # Sam or Bedgraph; 0 equal SAM, 1 equals Bedgraph
    my $bcheck = shift; 
-   my $offset = 0;
 
- 
+   my $offset = 0;
    my @a=();
    my @b=();
    my $n=0;
@@ -113,6 +113,7 @@ sub build_index{
    if($check == 1){
       $cc=0;
    }
+
    if($bcheck == 1){
       seek($dataFile, 0, 0);
    }  
@@ -131,11 +132,13 @@ sub build_index{
 
          if(!exists $chr{$line[$cc]}){ #obtain chromosome start line positions without header
             $chr{$line[$cc]}=$n;
-            push(@a,$line[$cc]);
-            push(@b,$n);
-            push(@sc, $line[3]);
-            $n2=0;
-            $rl=length($line[9]);
+               push(@a,$line[$cc]);
+               push(@b,$n);
+               $n2=0;
+               if($check != 1){
+                 push(@sc, $line[3]);
+                 $rl=length($line[9]);
+               }
          }else{
             if($check != 1){
                if($n2 <= 100){ #check first 100 lines of chromosome for sorting
@@ -147,7 +150,7 @@ sub build_index{
                      }elsif($a[$#a] ne $line[$cc]){
                         print "\nWarning .sam file must be sorted!\n";
                         die;
-                     }      
+              ;    }      
                   }
                   $n2+=1;   
               }
@@ -162,65 +165,83 @@ sub build_index{
    }  
 }
 
-# Split Chromosomes in two equal lengths for faster retrieval
-sub get_file_landmarks{
+sub get_file_landmarks_2{
     my $chroms=shift; #@chroms ref
     my $positions=shift; #@positions ref
-    my $n=shift; # lenght of file
-    my $file=shift; # filehandle
-    my $index=shift; # index file 
-    my $check=shift; # Sam or Bedgraph
-    my $d=shift; 
+    my $n=shift; # length of file
 
     my $fp=0; # Start Position
     my $fn=0; # End Position
-    my $fs=0; # Steps for segmenting chromosome
-    my $cc=3; # Default is sam column 4
-
-    if($check == 1){
-        $cc=2; # column 2 of bedgraph
-    }
-
+    
     my %chrIn=(); # Line Numbers
-    my %chrPos=(); # Actual Position on Chromosome
-
+     
     for(my $i=0; $i<=$#{$chroms}; $i++){
        my $l=0;
        if($i != $#{$chroms}){
           $fp = ${$positions}[$i];
           $fn = ${$positions}[$i + 1] - 1;
-          $fs = int((($fn - $fp)/$d) + 0.5);
        }else{
           $fp = ${$positions}[$i];
           $fn = $n;
-          $fs = int((($fn - $fp)/$d) + 0.5);
        }
-  
-       if($fs > 0){ # if divisible by d get file landmarks 
-          for(my $j=$fp; $j <= $fn; $j+=$fs){
-             push(@{$chrIn{${$chroms}[$i]}}, $j);
-             my @tp=split(/\t/,line_with_index($file, $index, $j));
-             chomp(@tp);
-             push(@{$chrPos{${$chroms}[$i]}}, $tp[$cc]);
-          }
-          push(@{$chrIn{${$chroms}[$i]}}, $fn);
-          my @tp=split(/\t/,line_with_index($file, $index, $fn));
-          chomp(@tp);
-          push(@{$chrPos{${$chroms}[$i]}}, $tp[$cc]);
-       }else{
-          push(@{$chrIn{${$chroms}[$i]}}, $fp);
-          my @tp=split(/\t/,line_with_index($file, $index, $fp));
-          chomp(@tp);
-          push(@{$chrPos{${$chroms}[$i]}}, $tp[$cc]);
-       
-          @tp=split(/\t/,line_with_index($file, $index, $fn));
-          chomp(@tp);
-          push(@{$chrPos{${$chroms}[$i]}}, $tp[$cc]);
-       }  
+       push(@{$chrIn{${$chroms}[$i]}},$fp);  
+       push(@{$chrIn{${$chroms}[$i]}},$fn);  
+    }
+ 
+  return(\%chrIn);
+}
+
+# Split chromosome until SNV is within d lines
+sub find_starting_point{
+    my $sprt=shift; #@findstart ref
+    my $chr=shift; #chromosome
+    my $bp=shift; #bp
+    my $rlen=shift;
+    my $file=shift; # filehandle
+    my $index=shift; # index file 
+    my $check=shift; # Sam or Bedgraph
+    my $d=shift; #number of lines
+   
+    my $cc=3;
+    my $rshift=$bp - (2 * $rlen) - 1;
+    if($rshift < 1){
+        $rshift=1;
+    }
+    my $t=0;
+    my $s=10;
+    my $fs=${$sprt}[0];
+    my $fn=${$sprt}[1];
+    my $dist=$fn - $fs;
+    if($dist == 0){
+        die "No entries for chromosome!\n";
+    }
+   
+    if($check == 1){
+        $cc=2; # column 2 of bedgraph
     }
 
-  return(\%chrIn, \%chrPos);
-}
+    while( $dist > $d ){
+       my @ps=split(/\t/,line_with_index($file, $index, $fs));
+       my @pn=split(/\t/,line_with_index($file, $index, $fn));
+
+       $t=int((($fs + $fn)/2) + 0.5);
+       my @pt=split(/\t/,line_with_index($file, $index, $t));
+       
+       if($rshift > $pt[$cc]){
+          $fs=$t;
+       }elsif($rshift < $pt[$cc]){
+          $fn=$t;
+       }
+       $d+=1;
+       $dist=$fn - $fs;
+       my $near=$rshift - $pt[$cc];
+
+       if( $near < 1000 && $near > 0){
+          last;
+       }
+     }
+   return($fs);
+} 
 
 # maximum number in an array
 sub my_max{
@@ -447,7 +468,7 @@ sub make_figure{
 
     $R->run(qq`pdf("$output", width=8 , height=8)`,
             q`par(mar=c(6.1,6.1,4.1,2.1))`,
-            q`plot(ab, type = "l", col="red", lwd=8, ylim=c(-m2 - 15,m1 + 15), ann=F, axes=F)`,
+            q`plot(ab, type = "l", col="red", lwd=8, ylim=c(-m2 - 20,m1 + 20), ann=F, axes=F)`,
             q`axis(1,at=c(0,m,length(ab)),labels=c(-m,0,+m),cex.axis=1.5,lwd=2)`,
             q`axis(2,at=c(seq(round((-m2 - 10)/20,0)*20,0,by=20), seq(0,round((m1 + 10)/20,0)*20, by=20)),labels=c(seq(round((m2 + 10)/20,0)*20,0, by=-20), seq(0,round((m1 + 10)/20,0)*20, by=20)),las=1,cex.axis=1.5, lwd=2)`, 
             q`points(a, type = "l", col="grey",lwd=4)`,
@@ -456,8 +477,8 @@ sub make_figure{
             q`points(-1 * c, type = "l", col="grey", lwd=4)`,
             q`points(-1 * d, type = "l", lty=2, col="grey", lwd=4)`,
             q`title(ylab="Depth of Sequence Reads Containing SNP (n)",xlab="Position Relative to SNP",cex.lab=1.5)`,
-            q`text(e,m1 + 5,"Reference Allele",col="red",cex=2)`,
-            q`text(e,-m2 - 5,"Alternate Allele",col="blue",cex=2)`,
+            q`text(e,m1 + 20,"Reference Allele",col="red",cex=2)`,
+            q`text(e,-m2 - 20,"Alternate Allele",col="blue",cex=2)`,
             q`abline(h=0,lty=2,col="black",lwd=3)`,
             q`dev.off()`);
 
@@ -636,7 +657,7 @@ sub getCommands{
               print "\n--out (Optional)\n\t\tSpecify the ouput file prefix (default ABC).\n";
               print "\n\t\t(ie. ABC will create two output files ABC.dist and ABC.align)\n";
               print "\n--min-reads (Optional)\n\t\tThe minimum number of reads covering a SNP (default: 25).\n";
-              print "\n--d (Optional)\n\t\tDivide chromosomes in d segments for faster retrieval (default: 2000).";
+              print "\n--d (Optional)\n\t\tDivide chromosomes into segments until reaching d lines for faster retrieval (default: 2000).";
               print "\n\t\tNote: Very large numbers will not necessarily increase speed.\n\n";
               print "\n--mw-thres (Optional)\n\t\tP-value threshold for the Mann-Whitney test used to test a bias in the read position between the SNV alleles. (default: 0.05)\n";
               print "\t\tTo report all SNVs set this parameter to 0.\n";
@@ -689,8 +710,8 @@ my $inputSam;
 my $inputBg;
 my $align;
 my $ASdist;
-#my $indexSam;
 my $indexBg;
+my $indexbgFile;
 my $bg=0;
 
 # Complement for flipping strands
@@ -720,15 +741,13 @@ open($SNPfile,"<", $SNPfilename) or die "Could not open $SNPfilename!\n";
 my $b=0;
 my $tbam;
 my $tbamname;
-my $template;
-my $tempname;
+my $template="ABC_TEMP_XXXXXXX";
+my $tempname=join("_",$outpref,$template);    
 
 if($inputSamFile =~ /.bam$/){ 
    open($inputSam,"samtools view $inputSamFile |") or die "Could not open $inputSamFile!\n";
 
    print "Extracting Alignments from $inputSamFile\n";
-   $template="ABC_TEMP_XXXXXXX";
-   $tempname=join("_",$outpref,$template);    
  
    ($tbam, $tbamname) = tempfile( $tempname, UNLINK => 1, SUFFIX => ".sam");
    open($tbam,"+>",$tbamname) or die "Could not open $tbamname for read/write!\n";
@@ -744,7 +763,7 @@ if($inputSamFile =~ /.bam$/){
 }
 
 (my $indexSam, my $indexSamFile) = tempfile( $tempname, UNLINK => 1, SUFFIX => ".idx");
-open($indexSam, "+>", $indexSamFile) or die "Could not open $inputSamFile.idx for read/write!\n";
+open($indexSam, "+>", $indexSamFile) or die "Could not open $inputSamFile for read/write!\n";
 
 if(!defined($ASdistribution)){
    $ASdistribution="ABC.dist";
@@ -766,10 +785,8 @@ my $read_length;
 my @chroms=@$chroms_ref;
 my @positions=@$positions_ref;
 
-(my $chrIn_ref, my $chrPos_ref)=get_file_landmarks(\@chroms, \@positions, $sam_n, $inputSam, $indexSam, 0, $d);
-
-my %chrIn=%$chrIn_ref;
-my %chrPos=%$chrPos_ref;
+(my $chrIn_ref_2)=get_file_landmarks_2(\@chroms, \@positions, $sam_n);
+my %chrIn_2=%$chrIn_ref_2;
 
 print "Finished!\n\n";
 
@@ -777,28 +794,25 @@ print "Finished!\n\n";
 # Variables for .bedgraph file (if defined).
 my @bg_chroms=();
 my @bg_positions=();
-my %bg_chrIn=();
-my %bg_chrPos=();
+my %bg_chrIn_2=();
 my $bg_max;
+my $bg_n=0;
 
 if(defined($inputBgFile)){
     
     $bg=1;
     open($inputBg,"<",$inputBgFile) or die "Could not open $inputBgFile!\n";
-    open($indexBg, "+>", "$inputBgFile.idx") or die "Could not open $inputSamFile.idx for read/write!\n";
+    ($indexBg, $indexbgFile) = tempfile( $tempname, UNLINK => 1, SUFFIX => ".bg.idx");
+    open($indexBg, "+>", $indexbgFile) or die "Could not open $indexbgFile for read/write!\n";
 
     # Create index of .bedgraph file
     print "Building index of $inputBgFile\n";
 
-    (my $bg_chroms_ref,my $bg_positions_ref, my $bg_n)=build_index($inputBg, $indexBg, 1);
+    (my $bg_chroms_ref,my $bg_positions_ref, $bg_n)=build_index($inputBg, $indexBg, 1, 0);
     @bg_chroms=@$bg_chroms_ref;
     @bg_positions=@$bg_positions_ref;
-  
-    (my $bg_chrIn_ref, my $bg_chrPos_ref)=get_file_landmarks(\@bg_chroms, \@bg_positions, $bg_n, $inputBg, $indexBg, 1, $d);
-    %bg_chrIn=%$bg_chrIn_ref;
-    %bg_chrPos=%$bg_chrPos_ref;
+ 
     print "Finished!\n";
-
 }
 
 # Print output file header
@@ -873,28 +887,17 @@ while(<$SNPfile>){
    my $snpend = $bp + $read_length + 1 ;  # upper window boundary around SNP
 
    # Find file position to begin search in .sam file 
-   my $s=${$chrIn{$chr}}[0];
-   my $f=$#{$chrIn{$chr}};
-   my $fi=$#{$chrPos{$chr}};
-   my $s2=0;
+   my $s=${$chrIn_2{$chr}}[0];
 
-   for(my $i=1; $i <= $#{$chrPos{$chr}} - 2; $i++){
-        if(($snpstart > ${$chrPos{$chr}}[$i]) && ($snpend < ${$chrPos{$chr}}[$i + 2])){
-            $s=${$chrIn{$chr}}[$i];
-            $s2=${$chrPos{$chr}}[$i];
-            last;
-        }
-   }
+   $s=find_starting_point(\@{$chrIn_2{$chr}},$chr, $bp, $read_length, $inputSam, $indexSam, 0, $d);
  
-   for(my $i=$s; $i <= ${$chrIn{$chr}}[$f]; $i++){
+   for(my $i=$s; $i <= ${$chrIn_2{$chr}}[1]; $i++){
 
       my @line2=split(/\t/,line_with_index($inputSam, $indexSam, $i));
       my @Chrom=split(/(\d+)/, $line2[2]);
       my $chrom=$line2[2];
       my $start=$line2[3];
       my $mapq=$line2[4];
-      #my $end=$start + length($line2[9]) - 1;
-      #my $read=$line2[9];
       my @splitread=split(//,$line2[9]);
       my $strand=$line2[1];
       my $cigar=$line2[5]; 
@@ -981,21 +984,14 @@ while(<$SNPfile>){
        # if .bedgraph is specified
        if($bg==1){
           # Find file position to begin search .bedgraph file 
-          my $s_2=${$bg_chrIn{$chr}}[0];
-          my $f_2=$#{$bg_chrIn{$chr}};
-          my $fi_2=$#{$bg_chrPos{$chr}};
-          my $ss_2=0;
+          (my $bg_chrIn_ref_2)=get_file_landmarks_2(\@bg_chroms, \@bg_positions, $bg_n );#, $inputBg, $indexBg);
+          %bg_chrIn_2=%$bg_chrIn_ref_2;
+          my $s_2=${$bg_chrIn_2{$chr}}[0];
 
-          for(my $i=1; $i <= $#{$bg_chrPos{$chr}} - 2; $i++){
-             if(($snpstart > ${$bg_chrPos{$chr}}[$i]) && ($snpend < ${$bg_chrPos{$chr}}[$i + 2])){ 
-                $s_2=${$bg_chrIn{$chr}}[$i];
-                $ss_2=${$bg_chrPos{$chr}}[$i];
-                last;
-             }
-          }
- 
+          $s_2=find_starting_point(\@{$bg_chrIn_2{$chr}},$chr, $bp, $read_length, $inputBg, $indexBg, 1, $d);
           my @region=();
-          for(my $i=$s_2; $i <= ${$bg_chrIn{$chr}}[$f_2]; $i++){
+         
+          for(my $i=$s_2; $i <= ${$bg_chrIn_2{$chr}}[1]; $i++){
    
               my @line3=split(/\t/,line_with_index($inputBg, $indexBg, $i));
               chomp(@line3);
