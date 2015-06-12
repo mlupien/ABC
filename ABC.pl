@@ -10,6 +10,8 @@ Mathieu Lupien
 Code Under License Artistic-2.0
 August 12, 2014
 
+Written By: Swneke D. Bailey
+
 ABC Identifies potential allele-specific binding events at known heterozygous positions within the aligned reads of a ChiP-Seq experiment. 
 ABC requires at a minimum two (2) files a sorted BAM/SAM file of the aligned reads from a ChIP-Seq experiment and a file containing the position, strand and allele
 information of heterozygous Single Nucleotide Variants (SNVs), either SNPs and/or Mutations. ABC calls allele-specific binding by identifying a bias in
